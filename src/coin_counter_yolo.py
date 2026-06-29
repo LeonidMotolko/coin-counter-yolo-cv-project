@@ -1,9 +1,7 @@
 import argparse
-import os
 from pathlib import Path
 
 import cv2
-import numpy as np
 from ultralytics import YOLO
 
 
@@ -13,27 +11,24 @@ def ensure_dir(path: str) -> None:
 
 def collect_images(input_path: str):
     input_path = Path(input_path)
-
     if input_path.is_file():
         return [input_path]
-
-    valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-    return sorted([p for p in input_path.iterdir() if p.suffix.lower() in valid_ext])
+    valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    return sorted([
+        path for path in input_path.iterdir()
+        if path.suffix.lower() in valid_extensions
+    ])
 
 
 # ============================================================
-# 1. ENHANCE
+# 1. Enhance
 # ============================================================
 
 def enhance_image(image):
     """
     Stage 1: Enhance.
-    Improve contrast before detection.
-
-    Methods:
-    - LAB color space;
-    - CLAHE on L channel;
-    - light denoising with bilateral filter.
+    Improve image quality before segmentation and detection.
+    Methods: LAB color space, CLAHE, bilateral filtering.
     """
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
@@ -43,59 +38,81 @@ def enhance_image(image):
 
     enhanced_lab = cv2.merge((enhanced_l, a_channel, b_channel))
     enhanced = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
-    enhanced = cv2.bilateralFilter(enhanced, 5, 40, 40)
+    enhanced = cv2.bilateralFilter(enhanced, d=5, sigmaColor=40, sigmaSpace=40)
 
     return enhanced
 
 
 # ============================================================
-# 2. SEGMENT
+# 2. Segment
 # ============================================================
 
-def create_segmentation_mask(image_shape, boxes):
+def segment_image(enhanced_image):
     """
     Stage 2: Segment.
-    YOLO gives object regions as bounding boxes.
-    For project visualization, each detected coin region is written to a binary mask.
+    Real OpenCV segmentation before YOLO detection.
+    Creates a binary mask of visually important regions.
     """
-    mask = np.zeros(image_shape[:2], dtype=np.uint8)
+    gray = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2GRAY)
 
-    for box in boxes:
-        x1, y1, x2, y2 = box["xyxy"]
-        cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+    segmentation_mask = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        41,
+        5
+    )
 
-    return mask
+    return segmentation_mask
 
 
 # ============================================================
-# 3. CLEAN
+# 3. Clean
 # ============================================================
+
+def clean_mask(segmentation_mask):
+    """
+    Stage 3: Clean.
+    Clean the segmentation mask using morphology.
+    Opening removes small noise; closing fills small gaps.
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+    cleaned_mask = cv2.morphologyEx(
+        segmentation_mask,
+        cv2.MORPH_OPEN,
+        kernel,
+        iterations=1
+    )
+
+    cleaned_mask = cv2.morphologyEx(
+        cleaned_mask,
+        cv2.MORPH_CLOSE,
+        kernel,
+        iterations=2
+    )
+
+    return cleaned_mask
+
 
 def clean_detections(boxes, confidence_threshold=0.35):
     """
-    Stage 3: Clean.
-    Remove weak detections using confidence threshold.
+    Additional post-detection filtering.
+    This is not the main Clean pipeline stage.
+    The main Clean stage is clean_mask(), which happens before detection.
     """
     return [box for box in boxes if box["confidence"] >= confidence_threshold]
 
 
-def clean_mask(mask):
-    """
-    Stage 3: Clean visualization mask with morphology.
-    """
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    cleaned = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    return cleaned
-
-
 # ============================================================
-# 4. DETECT
+# 4. Detect
 # ============================================================
 
 def detect_coins(model, enhanced_image, confidence_threshold=0.35, image_size=640):
     """
     Stage 4: Detect.
-    Detect coins using trained YOLO model.
+    Detect coins using the trained YOLO model.
     """
     results = model.predict(
         source=enhanced_image,
@@ -105,19 +122,17 @@ def detect_coins(model, enhanced_image, confidence_threshold=0.35, image_size=64
     )
 
     boxes = []
-
     if not results:
         return boxes
 
     result = results[0]
-
     if result.boxes is None:
         return boxes
 
-    for b in result.boxes:
-        xyxy = b.xyxy[0].cpu().numpy().astype(int)
-        confidence = float(b.conf[0].cpu().numpy())
-        class_id = int(b.cls[0].cpu().numpy())
+    for detected_box in result.boxes:
+        xyxy = detected_box.xyxy[0].cpu().numpy().astype(int)
+        confidence = float(detected_box.conf[0].cpu().numpy())
+        class_id = int(detected_box.cls[0].cpu().numpy())
 
         x1, y1, x2, y2 = xyxy.tolist()
 
@@ -132,7 +147,7 @@ def detect_coins(model, enhanced_image, confidence_threshold=0.35, image_size=64
 
 
 # ============================================================
-# 5. DECIDE
+# 5. Decide
 # ============================================================
 
 def decide(cleaned_boxes):
@@ -143,31 +158,31 @@ def decide(cleaned_boxes):
     count = len(cleaned_boxes)
 
     if count == 0:
-        label = "No coins detected"
+        decision_text = "No coins detected"
     elif count == 1:
-        label = "Detected 1 coin"
+        decision_text = "Detected 1 coin"
     else:
-        label = f"Detected {count} coins"
+        decision_text = f"Detected {count} coins"
 
-    return count, label
+    return count, decision_text
 
 
 # ============================================================
-# OUTPUT
+# Visualization and output
 # ============================================================
 
-def draw_result(image, boxes, decision_text):
+def draw_detection_result(image, boxes, decision_text):
     result = image.copy()
 
-    for i, box in enumerate(boxes, start=1):
+    for index, box in enumerate(boxes, start=1):
         x1, y1, x2, y2 = box["xyxy"]
-        conf = box["confidence"]
+        confidence = box["confidence"]
 
         cv2.rectangle(result, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
         cv2.putText(
             result,
-            f"{i}: {conf:.2f}",
+            f"{index}: {confidence:.2f}",
             (x1, max(22, y1 - 8)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.65,
@@ -176,8 +191,8 @@ def draw_result(image, boxes, decision_text):
             cv2.LINE_AA
         )
 
-    banner_w = min(image.shape[1] - 20, 620)
-    cv2.rectangle(result, (10, 10), (10 + banner_w, 62), (255, 255, 255), -1)
+    banner_width = min(image.shape[1] - 20, 620)
+    cv2.rectangle(result, (10, 10), (10 + banner_width, 62), (255, 255, 255), -1)
 
     cv2.putText(
         result,
@@ -194,22 +209,27 @@ def draw_result(image, boxes, decision_text):
 
 
 def save_decision(output_dir, image_name, count, decision_text, boxes):
-    path = Path(output_dir) / f"{image_name}_decision.txt"
+    decision_path = Path(output_dir) / f"{image_name}_decision.txt"
 
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(f"Final decision: {decision_text}\n")
-        f.write(f"Coin count: {count}\n\n")
-        f.write("Detected objects:\n")
+    with open(decision_path, "w", encoding="utf-8") as file:
+        file.write(f"Final decision: {decision_text}\n")
+        file.write(f"Coin count: {count}\n\n")
+        file.write("Detected objects:\n")
 
-        for i, box in enumerate(boxes, start=1):
+        for index, box in enumerate(boxes, start=1):
             x1, y1, x2, y2 = box["xyxy"]
-            f.write(
-                f"{i}. class=coin, confidence={box['confidence']:.3f}, "
+            file.write(
+                f"{index}. class=coin, "
+                f"confidence={box['confidence']:.3f}, "
                 f"box=({x1}, {y1}, {x2}, {y2})\n"
             )
 
 
 def process_image(model, image_path, output_dir, confidence_threshold=0.35, image_size=640):
+    """
+    Process one image using the required pipeline order:
+    image -> enhance -> segment -> clean -> detect -> decide
+    """
     image = cv2.imread(str(image_path))
 
     if image is None:
@@ -219,18 +239,28 @@ def process_image(model, image_path, output_dir, confidence_threshold=0.35, imag
     image_output_dir = Path(output_dir) / image_name
     ensure_dir(str(image_output_dir))
 
-    # Full required pipeline.
-    enhanced = enhance_image(image)
-    raw_boxes = detect_coins(model, enhanced, confidence_threshold, image_size)
-    cleaned_boxes = clean_detections(raw_boxes, confidence_threshold)
-    segmentation_mask = create_segmentation_mask(image.shape, raw_boxes)
-    cleaned_mask = create_segmentation_mask(image.shape, cleaned_boxes)
-    cleaned_mask = clean_mask(cleaned_mask)
-    count, decision_text = decide(cleaned_boxes)
-    detection_result = draw_result(image, cleaned_boxes, decision_text)
+    original_image = image
+    enhanced_image = enhance_image(original_image)
+    segmentation_mask = segment_image(enhanced_image)
+    cleaned_mask = clean_mask(segmentation_mask)
 
-    cv2.imwrite(str(image_output_dir / f"{image_name}_01_original.jpg"), image)
-    cv2.imwrite(str(image_output_dir / f"{image_name}_02_enhanced.jpg"), enhanced)
+    raw_boxes = detect_coins(
+        model=model,
+        enhanced_image=enhanced_image,
+        confidence_threshold=confidence_threshold,
+        image_size=image_size
+    )
+
+    cleaned_boxes = clean_detections(
+        boxes=raw_boxes,
+        confidence_threshold=confidence_threshold
+    )
+
+    count, decision_text = decide(cleaned_boxes)
+    detection_result = draw_detection_result(original_image, cleaned_boxes, decision_text)
+
+    cv2.imwrite(str(image_output_dir / f"{image_name}_01_original.jpg"), original_image)
+    cv2.imwrite(str(image_output_dir / f"{image_name}_02_enhanced.jpg"), enhanced_image)
     cv2.imwrite(str(image_output_dir / f"{image_name}_03_segmentation_mask.jpg"), segmentation_mask)
     cv2.imwrite(str(image_output_dir / f"{image_name}_04_cleaned_mask.jpg"), cleaned_mask)
     cv2.imwrite(str(image_output_dir / f"{image_name}_05_detection_result.jpg"), detection_result)
@@ -245,12 +275,17 @@ def process_image(model, image_path, output_dir, confidence_threshold=0.35, imag
     }
 
 
+# ============================================================
+# Program entry point
+# ============================================================
+
 def main():
     parser = argparse.ArgumentParser(description="YOLO Coin Counter CV Project")
-    parser.add_argument("--input", required=True, help="Path to image or folder with test images")
-    parser.add_argument("--output", default="data/results", help="Output folder")
+
+    parser.add_argument("--input", required=True, help="Path to one image or folder with test images")
+    parser.add_argument("--output", default="data/results", help="Folder where results will be saved")
     parser.add_argument("--model", default="models/best.pt", help="Path to trained YOLO model")
-    parser.add_argument("--conf", type=float, default=0.35, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=0.35, help="Confidence threshold for YOLO detections")
     parser.add_argument("--imgsz", type=int, default=640, help="YOLO image size")
 
     args = parser.parse_args()
@@ -275,7 +310,7 @@ def main():
 
     summary_path = Path(args.output) / "summary.txt"
 
-    with open(summary_path, "w", encoding="utf-8") as summary:
+    with open(summary_path, "w", encoding="utf-8") as summary_file:
         for image_path in images:
             result = process_image(
                 model=model,
@@ -289,7 +324,7 @@ def main():
             print(f"Saved to: {result['output_dir']}")
             print("-" * 40)
 
-            summary.write(f"{Path(result['image']).name}: {result['decision']}\n")
+            summary_file.write(f"{Path(result['image']).name}: {result['decision']}\n")
 
     print(f"Summary saved to: {summary_path}")
 
