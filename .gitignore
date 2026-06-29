@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+runs/
+Coin Dataset.v1i.yolov8/
+.idea/
