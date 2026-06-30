@@ -1,1 +1,5 @@
+History_of_Coins.png: Detected 9 coins
 images.png: Detected 25 coins
+money1.png: Detected 8 coins
+money2.jpg: Detected 5 coins
+money3.jpeg: Detected 54 coins

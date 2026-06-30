@@ -1,0 +1,13 @@
+Final decision: Detected 9 coins
+Coin count: 9
+
+Detected objects:
+1. class=coin, confidence=0.888, box=(34, 78, 192, 233)
+2. class=coin, confidence=0.850, box=(492, 304, 692, 469)
+3. class=coin, confidence=0.846, box=(536, 155, 736, 320)
+4. class=coin, confidence=0.818, box=(162, 39, 343, 121)
+5. class=coin, confidence=0.815, box=(320, 128, 529, 321)
+6. class=coin, confidence=0.792, box=(89, 223, 216, 352)
+7. class=coin, confidence=0.788, box=(183, 279, 384, 452)
+8. class=coin, confidence=0.765, box=(205, 123, 347, 284)
+9. class=coin, confidence=0.671, box=(622, 36, 770, 143)

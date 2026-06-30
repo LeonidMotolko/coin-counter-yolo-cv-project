@@ -1,0 +1,12 @@
+Final decision: Detected 8 coins
+Coin count: 8
+
+Detected objects:
+1. class=coin, confidence=0.933, box=(1, 8, 64, 72)
+2. class=coin, confidence=0.922, box=(1, 76, 64, 140)
+3. class=coin, confidence=0.917, box=(134, 12, 192, 69)
+4. class=coin, confidence=0.903, box=(204, 14, 255, 66)
+5. class=coin, confidence=0.903, box=(73, 86, 122, 132)
+6. class=coin, confidence=0.897, box=(135, 82, 192, 138)
+7. class=coin, confidence=0.890, box=(204, 84, 255, 134)
+8. class=coin, confidence=0.887, box=(73, 17, 121, 63)
